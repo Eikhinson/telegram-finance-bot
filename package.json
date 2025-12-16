@@ -1,0 +1,42 @@
+{
+  "name": "telegram-finance-bot",
+  "version": "1.0.0",
+  "description": "AI-powered financial accounting system via Telegram",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "mastra dev",
+    "dev:bot": "tsx src/index.ts",
+    "build": "mastra build",
+    "start": "node dist/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "finance",
+    "ai",
+    "mastra"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@ai-sdk/openai": "latest",
+    "@mastra/core": "latest",
+    "@mastra/memory": "latest",
+    "@mastra/pg": "latest",
+    "ai": "latest",
+    "csv-writer": "^1.6.0",
+    "dotenv": "^16.4.7",
+    "openai": "^4.70.2",
+    "pg": "^8.13.1",
+    "telegraf": "^4.16.3",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "mastra": "latest",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.2"
+  }
+}
