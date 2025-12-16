@@ -74,9 +74,7 @@ bot.catch((err, ctx) => {
 export async function startBot() {
     try {
         // @ts-ignore - Telegraf types might be slightly off for launch options in some versions
-        await bot.launch({
-            dropPendingUpdates: true,
-        });
+        await bot.launch();
         console.log('🤖 Telegram bot started successfully');
 
         // Enable graceful stop
