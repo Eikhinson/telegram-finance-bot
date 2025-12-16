@@ -1,6 +1,6 @@
 services:
-  # A Docker service for the bot
-  - type: worker
+  # A Docker web service for the bot (worker type not available on free plan)
+  - type: web
     name: telegram-finance-bot
     env: docker
     plan: free # or starter
