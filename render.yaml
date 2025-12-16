@@ -2,9 +2,8 @@ services:
   # A Docker service for the bot
   - type: worker
     name: telegram-finance-bot
-    env: node
+    env: docker
     plan: free # or starter
-    dockerCommand: ./deploy.sh
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
