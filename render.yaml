@@ -1,0 +1,22 @@
+services:
+  # A Docker service for the bot
+  - type: worker
+    name: telegram-finance-bot
+    env: node
+    plan: free # or starter
+    dockerCommand: ./deploy.sh
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: POSTGRES_CONNECTION_STRING
+        fromDatabase:
+          name: finance-bot-db
+          property: connectionString
+
+databases:
+  - name: finance-bot-db
+    databaseName: finance_bot
+    user: finance_user
+    plan: free # or starter
