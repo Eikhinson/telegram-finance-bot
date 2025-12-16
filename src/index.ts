@@ -22,14 +22,20 @@ function startHealthCheck() {
 
 async function main() {
     console.log('🚀 Starting Telegram Finance Bot...');
+    console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`📍 TELEGRAM_BOT_TOKEN: ${process.env.TELEGRAM_BOT_TOKEN ? 'SET (' + process.env.TELEGRAM_BOT_TOKEN.substring(0, 10) + '...)' : '❌ NOT SET'}`);
+    console.log(`📍 POSTGRES_CONNECTION_STRING: ${process.env.POSTGRES_CONNECTION_STRING ? 'SET' : '❌ NOT SET'}`);
+    console.log(`📍 OPENAI_API_KEY: ${process.env.OPENAI_API_KEY ? 'SET' : '❌ NOT SET'}`);
 
     // Start health check server for cloud deployments
     startHealthCheck();
 
     // Initialize database
+    console.log('📍 Initializing database...');
     await initDB();
 
     // Start Telegram bot
+    console.log('📍 Starting Telegram bot...');
     await startBot();
 
     console.log('✅ Bot is ready!');
