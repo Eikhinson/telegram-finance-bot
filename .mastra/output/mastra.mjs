@@ -97823,7 +97823,8 @@ Always respond with an array of ALL transactions found in the message.`,
 
 const { Pool } = require$$8;
 const pool = new Pool({
-  connectionString: process.env.POSTGRES_CONNECTION_STRING
+  connectionString: process.env.POSTGRES_CONNECTION_STRING,
+  ssl: { rejectUnauthorized: false } 
 });
 
 const saveTransactionTool = createTool({

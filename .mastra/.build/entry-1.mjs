@@ -8,7 +8,8 @@ import * as path from 'path';
 "use strict";
 const { Pool } = pg;
 const pool = new Pool({
-  connectionString: process.env.POSTGRES_CONNECTION_STRING
+  connectionString: process.env.POSTGRES_CONNECTION_STRING,
+  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : void 0
 });
 async function initDB() {
   const client = await pool.connect();
