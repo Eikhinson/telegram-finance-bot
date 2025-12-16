@@ -1,9 +1,11 @@
 services:
-  # A Docker web service for the bot (worker type not available on free plan)
+  # Native Node.js web service for the bot (Docker not available on free plan)
   - type: web
     name: telegram-finance-bot
-    env: docker
-    plan: free # or starter
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
@@ -15,9 +17,11 @@ services:
         fromDatabase:
           name: finance-bot-db
           property: connectionString
+      - key: NODE_ENV
+        value: production
 
 databases:
   - name: finance-bot-db
     databaseName: finance_bot
     user: finance_user
-    plan: free # or starter
+    plan: free
