@@ -1,5 +1,6 @@
 import { Telegraf } from 'telegraf';
 import * as dotenv from 'dotenv';
+import { pool } from '../db/client';
 import { handleVoice } from './handlers/voice-handler';
 import { handleText } from './handlers/text-handler';
 import {
@@ -16,9 +17,35 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 // Middleware for logging
 bot.use(async (ctx, next) => {
     const start = Date.now();
-    await next();
+    try {
+        await next();
+    } catch (e) {
+        console.error('Middleware caught error:', e);
+        throw e; // rethrow for bot.catch
+    }
     const ms = Date.now() - start;
     console.log(`[${ctx.updateType}] ${ms}ms`);
+});
+
+// Diagnostics
+bot.command('ping', async (ctx) => {
+    await ctx.reply('🏓 Pong! Bot is alive and listening.');
+});
+
+bot.command('status', async (ctx) => {
+    try {
+        await ctx.reply('🔍 Checking system status...');
+
+        // Check DB
+        const startDb = Date.now();
+        await pool.query('SELECT 1');
+        const dbMs = Date.now() - startDb;
+
+        await ctx.reply(`✅ Database: Connected (${dbMs}ms)\n✅ Bot: Online\n✅ Environment: ${process.env.NODE_ENV || 'development'}`);
+    } catch (error) {
+        console.error('Status check failed:', error);
+        await ctx.reply(`❌ System Error:\nDatabase: Failed\nError: ${(error as Error).message}`);
+    }
 });
 
 // Commands
@@ -34,7 +61,14 @@ bot.on('text', handleText);
 // Error handling
 bot.catch((err, ctx) => {
     console.error(`Error for ${ctx.updateType}:`, err);
-    ctx.reply('Произошла ошибка. Попробуйте ещё раз.');
+    // Try to reply to user if possible
+    try {
+        if (ctx && ctx.reply) {
+            ctx.reply('❌ Внутренняя ошибка бота. Администратор уведомлен.');
+        }
+    } catch (e) {
+        console.error('Could not reply with error message:', e);
+    }
 });
 
 export async function startBot() {
