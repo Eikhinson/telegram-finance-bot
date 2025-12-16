@@ -1,16 +1,4 @@
-import { evaluate } from '@mastra/core/eval';
-import { registerHook, AvailableHooks } from '@mastra/core/hooks';
-import { TABLE_EVALS } from '@mastra/core/storage';
-import { scoreTraces, scoreTracesWorkflow } from '@mastra/core/scores/scoreTraces';
-import { generateEmptyFromSchema, checkEvalStorageFields } from '@mastra/core/utils';
-import { Mastra } from '@mastra/core/mastra';
-import { PostgresStore } from '@mastra/pg';
-import { Agent, tryGenerateWithJsonFallback, tryStreamWithJsonFallback, MessageList, convertMessages } from '@mastra/core/agent';
-import { createOpenAI as createOpenAI$1 } from '@ai-sdk/openai';
-import { z, ZodObject, ZodFirstPartyTypeKind } from 'zod';
-import { Memory as Memory$1 } from '@mastra/memory';
-import { clearUserDataTool, deleteLastTransactionTool, saveTransactionTool, getTransactionsTool } from './tools/05f51b40-a0fb-404c-b357-7d1c984b4a3d.mjs';
-import { getCategoryBreakdownTool, generatePLTool } from './tools/691c1afa-595f-4cf7-aa87-875efc16dc9f.mjs';
+import { M as MastraError, e as executeHook, a as createWorkflow, z, b as createStep, d as pMap, s as saveScorePayloadSchema, f as convertMessages, g as zodToJsonSchema$1, h as MastraBase, i as augmentWithInit, j as ModelRouterEmbeddingModel, k as deepMerge, l as MessageList, m as createWorkflow$1, n as createStep$1, A as Agent, c as createTool, t as tryGenerateWithJsonFallback, o as tryStreamWithJsonFallback, q as ModelRouterLanguageModel, r as generateEmptyFromSchema, Z as ZodObject, u as z$1, v as ZodFirstPartyTypeKind, w as toJSONSchema, x as safeParseAsync, y as isVercelTool, R as RuntimeContext, P as PROVIDER_REGISTRY, T as Tool, B as Telemetry, C as getProviderConfig, E as ErrorCategory, D as ErrorDomain, F as ChunkFrom, G as getErrorFromUnknown, H as AISpanType, I as mastra, J as registerHook, K as AvailableHooks, L as checkEvalStorageFields, N as TABLE_EVALS, O as ModelsDevGateway, Q as NetlifyGateway, S as GatewayRegistry } from './mastra.mjs';
 import crypto$1, { randomUUID } from 'crypto';
 import { readdir, readFile, mkdtemp, rm, writeFile, mkdir, copyFile, stat } from 'fs/promises';
 import * as https from 'https';
@@ -20,182 +8,491 @@ import { Http2ServerRequest } from 'http2';
 import { Readable, Writable } from 'stream';
 import { existsSync, readFileSync, createReadStream, lstatSync } from 'fs';
 import { join, resolve as resolve$2, dirname, extname, basename, isAbsolute, relative } from 'path';
-import { RuntimeContext } from '@mastra/core/runtime-context';
-import { Telemetry } from '@mastra/core/telemetry';
-import { createTool, isVercelTool, Tool } from '@mastra/core/tools';
-import { MastraError, ErrorCategory, ErrorDomain, getErrorFromUnknown } from '@mastra/core/error';
-import { ModelRouterLanguageModel, PROVIDER_REGISTRY, getProviderConfig } from '@mastra/core/llm';
-import { ChunkFrom } from '@mastra/core/stream';
-import util, { promisify } from 'util';
+import require$$0, { promisify } from 'util';
 import { Buffer as Buffer$1 } from 'buffer';
-import { AISpanType } from '@mastra/core/ai-tracing';
-import { zodToJsonSchema as zodToJsonSchema$1 } from '@mastra/core/utils/zod-to-json';
-import { MastraA2AError } from '@mastra/core/a2a';
-import { RuntimeContext as RuntimeContext$1 } from '@mastra/core/di';
 import { TransformStream as TransformStream$1, ReadableStream as ReadableStream$1 } from 'stream/web';
-import { MastraMemory, MemoryProcessor } from '@mastra/core/memory';
-import * as z42 from 'zod/v4';
-import { z as z$1 } from 'zod/v4';
-import { ZodFirstPartyTypeKind as ZodFirstPartyTypeKind$1 } from 'zod/v3';
 import { spawn as spawn$1, execFile as execFile$1, exec as exec$1 } from 'child_process';
 import { createRequire } from 'module';
 import { tmpdir } from 'os';
-import { createWorkflow, createStep } from '@mastra/core/workflows';
 import { tools } from './tools.mjs';
-import './client.mjs';
+import 'events';
 import 'pg';
+import 'pg/lib/utils';
 
-const INCOME_CATEGORIES = [
-  "sales",
-  // Продажи
-  "services",
-  // Услуги
-  "consulting",
-  // Консалтинг
-  "other_income"
-  // Прочие доходы
-];
-const EXPENSE_CATEGORIES = [
-  "salaries",
-  // Зарплаты
-  "rent",
-  // Аренда
-  "utilities",
-  // Коммунальные услуги
-  "marketing",
-  // Маркетинг
-  "it_services",
-  // IT услуги
-  "office_supplies",
-  // Офисные принадлежности
-  "travel",
-  // Командировки
-  "professional_services",
-  // Профессиональные услуги
-  "taxes",
-  // Налоги
-  "insurance",
-  // Страхование
-  "other_expenses"
-  // Прочие расходы
-];
+// src/eval/evaluation.ts
+async function evaluate({
+  agentName,
+  input,
+  metric,
+  output,
+  runId,
+  globalRunId,
+  testInfo,
+  instructions
+}) {
+  const runIdToUse = runId || crypto.randomUUID();
+  let metricResult;
+  let metricName = metric.constructor.name;
+  try {
+    metricResult = await metric.measure(input.toString(), output);
+  } catch (e) {
+    throw new MastraError(
+      {
+        id: "EVAL_METRIC_MEASURE_EXECUTION_FAILED",
+        domain: "EVAL" /* EVAL */,
+        category: "USER" /* USER */,
+        details: {
+          agentName,
+          metricName,
+          globalRunId
+        }
+      },
+      e
+    );
+  }
+  const traceObject = {
+    input: input.toString(),
+    output,
+    result: metricResult,
+    agentName,
+    metricName,
+    instructions,
+    globalRunId,
+    runId: runIdToUse,
+    testInfo
+  };
+  try {
+    executeHook("onEvaluation" /* ON_EVALUATION */, traceObject);
+  } catch (e) {
+    throw new MastraError(
+      {
+        id: "EVAL_HOOK_EXECUTION_FAILED",
+        domain: "EVAL" /* EVAL */,
+        category: "USER" /* USER */,
+        details: {
+          agentName,
+          metricName,
+          globalRunId
+        }
+      },
+      e
+    );
+  }
+  return { ...metricResult, output };
+}
 
-const navy$1 = createOpenAI$1({
-  baseURL: process.env.OPENAI_BASE_URL,
-  apiKey: process.env.OPENAI_API_KEY
-});
-const transactionSchema = z.object({
-  category: z.enum(["income", "expense"]),
-  subcategory: z.string(),
-  amount: z.number(),
-  date: z.string().describe("Date in ISO format"),
-  description: z.string()
-});
-const multiTransactionSchema = z.object({
-  transactions: z.array(transactionSchema)
-});
-const categorizationAgent = new Agent({
-  name: "Payment Categorization Agent",
-  instructions: `You are an expert financial categorization assistant. 
-  
-Your task is to analyze transaction descriptions and categorize them. 
-IMPORTANT: The user may mention MULTIPLE transactions in a single message. You MUST extract ALL of them.
+// src/scores/scoreTraces/scoreTraces.ts
+async function scoreTraces({
+  scorerName,
+  targets,
+  mastra
+}) {
+  const workflow = mastra.__getInternalWorkflow("__batch-scoring-traces");
+  try {
+    const run = await workflow.createRunAsync();
+    await run.start({ inputData: { targets, scorerName } });
+  } catch (error) {
+    const mastraError = new MastraError(
+      {
+        category: "SYSTEM",
+        domain: "SCORER",
+        id: "MASTRA_SCORER_FAILED_TO_RUN_TRACE_SCORING",
+        details: {
+          scorerName,
+          targets: JSON.stringify(targets)
+        }
+      },
+      error
+    );
+    mastra.getLogger()?.trackException(mastraError);
+    mastra.getLogger()?.error(mastraError.toString());
+  }
+}
 
-INCOME CATEGORIES:
-${INCOME_CATEGORIES.map((cat) => `- ${cat}`).join("\n")}
+// src/scores/scoreTraces/utils.ts
+function buildSpanTree(spans) {
+  const spanMap = /* @__PURE__ */ new Map();
+  const childrenMap = /* @__PURE__ */ new Map();
+  const rootSpans = [];
+  for (const span of spans) {
+    spanMap.set(span.spanId, span);
+  }
+  for (const span of spans) {
+    if (span.parentSpanId === null) {
+      rootSpans.push(span);
+    } else {
+      const siblings = childrenMap.get(span.parentSpanId) || [];
+      siblings.push(span);
+      childrenMap.set(span.parentSpanId, siblings);
+    }
+  }
+  for (const children of childrenMap.values()) {
+    children.sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
+  }
+  rootSpans.sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
+  return { spanMap, childrenMap, rootSpans };
+}
+function getChildrenOfType(spanTree, parentSpanId, spanType) {
+  const children = spanTree.childrenMap.get(parentSpanId) || [];
+  return children.filter((span) => span.spanType === spanType);
+}
+function normalizeMessageContent(content) {
+  if (typeof content === "string") {
+    return content;
+  }
+  const tempMessage = {
+    id: "temp",
+    role: "user",
+    parts: content.map((part) => ({ type: part.type, text: part.text }))
+  };
+  const converted = convertMessages(tempMessage).to("AIV4.UI");
+  return converted[0]?.content || "";
+}
+function convertToUIMessage(message, createdAt) {
+  let messageInput;
+  if (typeof message.content === "string") {
+    messageInput = {
+      id: "temp",
+      role: message.role,
+      content: message.content
+    };
+  } else {
+    messageInput = {
+      id: "temp",
+      role: message.role,
+      parts: message.content.map((part) => ({ type: part.type, text: part.text }))
+    };
+  }
+  const converted = convertMessages(messageInput).to("AIV4.UI");
+  const result = converted[0];
+  if (!result) {
+    throw new Error("Failed to convert message");
+  }
+  return {
+    ...result,
+    id: "",
+    // Spans don't have message IDs
+    createdAt: new Date(createdAt)
+    // Use span timestamp
+  };
+}
+function extractInputMessages(agentSpan) {
+  const input = agentSpan.input;
+  if (typeof input === "string") {
+    return [
+      {
+        role: "user",
+        content: input,
+        createdAt: new Date(agentSpan.startedAt),
+        parts: [{ type: "text", text: input }],
+        experimental_attachments: []
+      }
+    ];
+  }
+  if (Array.isArray(input)) {
+    return input.map((msg) => convertToUIMessage(msg, agentSpan.startedAt));
+  }
+  if (input && typeof input === "object" && Array.isArray(input.messages)) {
+    return input.messages.map((msg) => convertToUIMessage(msg, agentSpan.startedAt));
+  }
+  return [];
+}
+function extractSystemMessages(llmSpan) {
+  return (llmSpan.input?.messages || []).filter((msg) => msg.role === "system").map((msg) => ({
+    role: "system",
+    content: normalizeMessageContent(msg.content)
+  }));
+}
+function extractRememberedMessages(llmSpan, currentInputContent) {
+  const messages = (llmSpan.input?.messages || []).filter((msg) => msg.role !== "system").filter((msg) => normalizeMessageContent(msg.content) !== currentInputContent);
+  return messages.map((msg) => convertToUIMessage(msg, llmSpan.startedAt));
+}
+function reconstructToolInvocations(spanTree, parentSpanId) {
+  const toolSpans = getChildrenOfType(spanTree, parentSpanId, "tool_call" /* TOOL_CALL */);
+  return toolSpans.map((toolSpan) => ({
+    state: "result",
+    toolName: toolSpan.attributes?.toolId,
+    args: toolSpan.input || {},
+    result: toolSpan.output || {}
+  }));
+}
+function createMessageParts(toolInvocations, textContent) {
+  const parts = [];
+  for (const toolInvocation of toolInvocations) {
+    parts.push({
+      type: "tool-invocation",
+      toolInvocation
+    });
+  }
+  if (textContent.trim()) {
+    parts.push({
+      type: "text",
+      text: textContent
+    });
+  }
+  return parts;
+}
+function validateTrace(trace) {
+  if (!trace) {
+    throw new Error("Trace is null or undefined");
+  }
+  if (!trace.spans || !Array.isArray(trace.spans)) {
+    throw new Error("Trace must have a spans array");
+  }
+  if (trace.spans.length === 0) {
+    throw new Error("Trace has no spans");
+  }
+  const spanIds = new Set(trace.spans.map((span) => span.spanId));
+  for (const span of trace.spans) {
+    if (span.parentSpanId && !spanIds.has(span.parentSpanId)) {
+      throw new Error(`Span ${span.spanId} references non-existent parent ${span.parentSpanId}`);
+    }
+  }
+}
+function findPrimaryLLMSpan(spanTree, rootAgentSpan) {
+  const directLLMSpans = getChildrenOfType(spanTree, rootAgentSpan.spanId, "model_generation" /* MODEL_GENERATION */);
+  if (directLLMSpans.length > 0) {
+    return directLLMSpans[0];
+  }
+  throw new Error("No model generation span found in trace");
+}
+function prepareTraceForTransformation(trace) {
+  validateTrace(trace);
+  const spanTree = buildSpanTree(trace.spans);
+  const rootAgentSpan = spanTree.rootSpans.find((span) => span.spanType === "agent_run");
+  if (!rootAgentSpan) {
+    throw new Error("No root agent_run span found in trace");
+  }
+  return { spanTree, rootAgentSpan };
+}
+function transformTraceToScorerInputAndOutput(trace) {
+  const { spanTree, rootAgentSpan } = prepareTraceForTransformation(trace);
+  if (!rootAgentSpan.output) {
+    throw new Error("Root agent span has no output");
+  }
+  const primaryLLMSpan = findPrimaryLLMSpan(spanTree, rootAgentSpan);
+  const inputMessages = extractInputMessages(rootAgentSpan);
+  const systemMessages = extractSystemMessages(primaryLLMSpan);
+  const currentInputContent = inputMessages[0]?.content || "";
+  const rememberedMessages = extractRememberedMessages(primaryLLMSpan, currentInputContent);
+  const input = {
+    // We do not keep track of the tool call ids in traces, so we need to cast to UIMessageWithMetadata
+    inputMessages,
+    rememberedMessages,
+    systemMessages,
+    taggedSystemMessages: {}
+    // Todo: Support tagged system messages
+  };
+  const toolInvocations = reconstructToolInvocations(spanTree, rootAgentSpan.spanId);
+  const responseText = rootAgentSpan.output.text || "";
+  const responseMessage = {
+    role: "assistant",
+    content: responseText,
+    createdAt: new Date(rootAgentSpan.endedAt || rootAgentSpan.startedAt),
+    // @ts-ignore
+    parts: createMessageParts(toolInvocations, responseText),
+    experimental_attachments: [],
+    // Tool invocations are being deprecated however we need to support it for now
+    toolInvocations
+  };
+  const output = [responseMessage];
+  return {
+    input,
+    output
+  };
+}
 
-EXPENSE CATEGORIES:
-${EXPENSE_CATEGORIES.map((cat) => `- ${cat}`).join("\n")}
-
-For EACH transaction mentioned:
-1. Determine if it's income or expense
-2. Choose the most appropriate subcategory
-3. Extract the amount
-4. Extract or infer the date (use today if not mentioned)
-5. Create a clean description
-
-Examples of MULTIPLE transactions in one message:
-"\u041F\u043E\u043B\u0443\u0447\u0438\u043B 50000 \u043E\u0442 \u043A\u043B\u0438\u0435\u043D\u0442\u0430, \u0437\u0430\u043F\u043B\u0430\u0442\u0438\u043B \u0430\u0440\u0435\u043D\u0434\u0443 30000 \u0438 \u0437\u0430\u0440\u043F\u043B\u0430\u0442\u0443 100000"
-\u2192 Returns 3 transactions:
-  1. income, services, 50000, "\u041F\u043E\u043B\u0443\u0447\u0438\u043B \u043E\u0442 \u043A\u043B\u0438\u0435\u043D\u0442\u0430"
-  2. expense, rent, 30000, "\u0410\u0440\u0435\u043D\u0434\u0430"
-  3. expense, salaries, 100000, "\u0417\u0430\u0440\u043F\u043B\u0430\u0442\u0430"
-
-"\u0414\u043E\u0445\u043E\u0434 200\u043A \u043A\u043E\u043D\u0441\u0430\u043B\u0442\u0438\u043D\u0433, \u0440\u0430\u0441\u0445\u043E\u0434 50\u043A \u043C\u0430\u0440\u043A\u0435\u0442\u0438\u043D\u0433, 20\u043A IT"
-\u2192 Returns 3 transactions:
-  1. income, consulting, 200000
-  2. expense, marketing, 50000
-  3. expense, it_services, 20000
-
-Parse "\u043A" or "\u0442\u044B\u0441" as thousands (e.g., "50\u043A" = 50000).
-Always respond with an array of ALL transactions found in the message.`,
-  model: navy$1("gpt-5.2"),
-  // @ts-ignore
-  outputSchema: multiTransactionSchema
-});
-
-const navy = createOpenAI$1({
-  baseURL: process.env.OPENAI_BASE_URL,
-  apiKey: process.env.OPENAI_API_KEY
-});
-const financeAssistantAgent = new Agent({
-  name: "Finance Assistant",
-  instructions: `You are a helpful financial assistant for a small business owner.
-
-You have access to financial data and can:
-- Answer questions about income and expenses
-- Provide insights into spending patterns
-- Generate financial reports
-- Help identify where money is being spent
-- Offer financial advice based on transaction history
-
-When answering questions:
-1. Use the available tools to fetch relevant data
-2. Analyze the data to provide meaningful insights
-3. Present information clearly and concisely
-4. Use Russian language for responses
-5. Format numbers with proper currency (\u0440\u0443\u0431.)
-
-Examples of questions you can answer:
-- "\u041A\u0443\u0434\u0430 \u0443\u0448\u043B\u0438 \u0434\u0435\u043D\u044C\u0433\u0438 \u0432 \u0434\u0435\u043A\u0430\u0431\u0440\u0435?"
-- "\u0421\u043A\u043E\u043B\u044C\u043A\u043E \u044F \u043F\u043E\u0442\u0440\u0430\u0442\u0438\u043B \u043D\u0430 \u043C\u0430\u0440\u043A\u0435\u0442\u0438\u043D\u0433 \u0437\u0430 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u043C\u0435\u0441\u044F\u0446?"
-- "\u041F\u043E\u043A\u0430\u0436\u0438 \u043C\u043D\u0435 \u0432\u0441\u0435 \u0440\u0430\u0441\u0445\u043E\u0434\u044B \u043D\u0430 IT"
-- "\u041A\u0430\u043A\u0430\u044F \u0431\u044B\u043B\u0430 \u0447\u0438\u0441\u0442\u0430\u044F \u043F\u0440\u0438\u0431\u044B\u043B\u044C \u0437\u0430 \u043A\u0432\u0430\u0440\u0442\u0430\u043B?"
-- "\u041D\u0430 \u0447\u0442\u043E \u0443\u0445\u043E\u0434\u0438\u0442 \u0431\u043E\u043B\u044C\u0448\u0435 \u0432\u0441\u0435\u0433\u043E \u0434\u0435\u043D\u0435\u0433?"
-
-Always be helpful, professional, and proactive in offering financial insights.
-
-CRITICAL SAFETY RULES:
-1. If the user asks to delete ALL data (using clearUserData), you MUST first ask for explicit confirmation.
-   Example: "Are you sure you want to delete all your financial history? This action cannot be undone. Please type 'YES DELETE' to confirm."
-2. ONLY call the clearUserData tool if the user provides this explicit confirmation.
-3. For clearUserData, you must set the 'confirmed' parameter to true.
-4. If the user asks to delete the LAST transaction (deleteLastTransaction), you can proceed without explicit double-confirmation if the intent is clear (e.g. "Oops, delete that"), but it's good practice to confirm "Deleted transaction X".`,
-  model: navy("gpt-5.2"),
-  memory: new Memory$1({
-    storage: new PostgresStore({
-      connectionString: process.env.POSTGRES_CONNECTION_STRING
-    })
+// src/scores/scoreTraces/scoreTracesWorkflow.ts
+var getTraceStep = createStep({
+  id: "__process-trace-scoring",
+  inputSchema: z.object({
+    targets: z.array(
+      z.object({
+        traceId: z.string(),
+        spanId: z.string().optional()
+      })
+    ),
+    scorerName: z.string()
   }),
-  tools: {
-    getTransactions: getTransactionsTool,
-    saveTransaction: saveTransactionTool,
-    generatePL: generatePLTool,
-    getCategoryBreakdown: getCategoryBreakdownTool,
-    deleteLastTransaction: deleteLastTransactionTool,
-    clearUserData: clearUserDataTool
+  outputSchema: z.any(),
+  execute: async ({ inputData, tracingContext, mastra }) => {
+    const logger = mastra.getLogger();
+    if (!logger) {
+      console.warn(
+        "[scoreTracesWorkflow] Logger not initialized: no debug or error logs will be recorded for scoring traces."
+      );
+    }
+    const storage = mastra.getStorage();
+    if (!storage) {
+      const mastraError = new MastraError({
+        id: "MASTRA_STORAGE_NOT_FOUND_FOR_TRACE_SCORING",
+        domain: "STORAGE" /* STORAGE */,
+        category: "SYSTEM" /* SYSTEM */,
+        text: "Storage not found for trace scoring",
+        details: {
+          scorerName: inputData.scorerName
+        }
+      });
+      logger?.error(mastraError.toString());
+      logger?.trackException(mastraError);
+      return;
+    }
+    let scorer;
+    try {
+      scorer = mastra.getScorerByName(inputData.scorerName);
+    } catch (error) {
+      const mastraError = new MastraError(
+        {
+          id: "MASTRA_SCORER_NOT_FOUND_FOR_TRACE_SCORING",
+          domain: "SCORER" /* SCORER */,
+          category: "SYSTEM" /* SYSTEM */,
+          text: `Scorer not found for trace scoring`,
+          details: {
+            scorerName: inputData.scorerName
+          }
+        },
+        error
+      );
+      logger?.error(mastraError.toString());
+      logger?.trackException(mastraError);
+      return;
+    }
+    await pMap(
+      inputData.targets,
+      async (target) => {
+        try {
+          await runScorerOnTarget({ storage, scorer, target, tracingContext });
+        } catch (error) {
+          const mastraError = new MastraError(
+            {
+              id: "MASTRA_SCORER_FAILED_TO_RUN_SCORER_ON_TRACE",
+              domain: "SCORER" /* SCORER */,
+              category: "SYSTEM" /* SYSTEM */,
+              details: {
+                scorerName: scorer.name,
+                spanId: target.spanId || "",
+                traceId: target.traceId
+              }
+            },
+            error
+          );
+          logger?.error(mastraError.toString());
+          logger?.trackException(mastraError);
+        }
+      },
+      { concurrency: 3 }
+    );
   }
 });
-
-const mastra = new Mastra({
-  agents: {
-    categorization: categorizationAgent,
-    financeAssistant: financeAssistantAgent
-  },
-  storage: new PostgresStore({
-    connectionString: process.env.POSTGRES_CONNECTION_STRING
-  })
+async function runScorerOnTarget({
+  storage,
+  scorer,
+  target,
+  tracingContext
+}) {
+  const trace = await storage.getAITrace(target.traceId);
+  if (!trace) {
+    throw new Error(`Trace not found for scoring, traceId: ${target.traceId}`);
+  }
+  let span;
+  if (target.spanId) {
+    span = trace.spans.find((span2) => span2.spanId === target.spanId);
+  } else {
+    span = trace.spans.find((span2) => span2.parentSpanId === null);
+  }
+  if (!span) {
+    throw new Error(
+      `Span not found for scoring, traceId: ${target.traceId}, spanId: ${target.spanId ?? "Not provided"}`
+    );
+  }
+  const scorerRun = buildScorerRun({
+    scorerType: scorer.type === "agent" ? "agent" : void 0,
+    tracingContext,
+    trace,
+    targetSpan: span
+  });
+  const result = await scorer.run(scorerRun);
+  const scorerResult = {
+    ...result,
+    scorer: {
+      id: scorer.name,
+      name: scorer.name,
+      description: scorer.description
+    },
+    traceId: target.traceId,
+    spanId: target.spanId,
+    entityId: span.name,
+    entityType: span.spanType,
+    entity: { traceId: span.traceId, spanId: span.spanId },
+    source: "TEST",
+    scorerId: scorer.name
+  };
+  const savedScoreRecord = await validateAndSaveScore({ storage, scorerResult });
+  await attachScoreToSpan({ storage, span, scoreRecord: savedScoreRecord });
+}
+async function validateAndSaveScore({ storage, scorerResult }) {
+  const payloadToSave = saveScorePayloadSchema.parse(scorerResult);
+  const result = await storage.saveScore(payloadToSave);
+  return result.score;
+}
+function buildScorerRun({
+  scorerType,
+  tracingContext,
+  trace,
+  targetSpan
+}) {
+  let runPayload;
+  if (scorerType === "agent") {
+    const { input, output } = transformTraceToScorerInputAndOutput(trace);
+    runPayload = {
+      input,
+      output
+    };
+  } else {
+    runPayload = { input: targetSpan.input, output: targetSpan.output };
+  }
+  runPayload.tracingContext = tracingContext;
+  return runPayload;
+}
+async function attachScoreToSpan({
+  storage,
+  span,
+  scoreRecord
+}) {
+  const existingLinks = span.links || [];
+  const link = {
+    type: "score",
+    scoreId: scoreRecord.id,
+    scorerName: scoreRecord.scorer.name,
+    score: scoreRecord.score,
+    createdAt: scoreRecord.createdAt
+  };
+  await storage.updateAISpan({
+    spanId: span.spanId,
+    traceId: span.traceId,
+    updates: { links: [...existingLinks, link] }
+  });
+}
+var scoreTracesWorkflow = createWorkflow({
+  id: "__batch-scoring-traces",
+  inputSchema: z.object({
+    targets: z.array(
+      z.object({
+        traceId: z.string(),
+        spanId: z.string().optional()
+      })
+    ),
+    scorerName: z.string()
+  }),
+  outputSchema: z.any(),
+  steps: [getTraceStep],
+  options: {
+    tracingPolicy: {
+      internal: 15 /* ALL */
+    }
+  }
 });
+scoreTracesWorkflow.then(getTraceStep).commit();
 
 // src/utils/mime.ts
 var getMimeType = (filename, mimes = baseMimes) => {
@@ -479,39 +776,6 @@ var compose = (middleware, onError, onNotFound) => {
       return context;
     }
   };
-};
-
-// src/http-exception.ts
-var HTTPException$1 = class HTTPException extends Error {
-  res;
-  status;
-  /**
-   * Creates an instance of `HTTPException`.
-   * @param status - HTTP status code for the exception. Defaults to 500.
-   * @param options - Additional options for the exception.
-   */
-  constructor(status = 500, options) {
-    super(options?.message, { cause: options?.cause });
-    this.res = options?.res;
-    this.status = status;
-  }
-  /**
-   * Returns the response object associated with the exception.
-   * If a response object is not provided, a new response is created with the error message and status code.
-   * @returns The response object.
-   */
-  getResponse() {
-    if (this.res) {
-      const newResponse = new Response(this.res.body, {
-        status: this.status,
-        headers: this.res.headers
-      });
-      return newResponse;
-    }
-    return new Response(this.message, {
-      status: this.status
-    });
-  }
 };
 
 // src/request/constants.ts
@@ -2603,6 +2867,39 @@ var logger = (fn = console.log) => {
   };
 };
 
+// src/http-exception.ts
+var HTTPException$1 = class HTTPException extends Error {
+  res;
+  status;
+  /**
+   * Creates an instance of `HTTPException`.
+   * @param status - HTTP status code for the exception. Defaults to 500.
+   * @param options - Additional options for the exception.
+   */
+  constructor(status = 500, options) {
+    super(options?.message, { cause: options?.cause });
+    this.res = options?.res;
+    this.status = status;
+  }
+  /**
+   * Returns the response object associated with the exception.
+   * If a response object is not provided, a new response is created with the error message and status code.
+   * @returns The response object.
+   */
+  getResponse() {
+    if (this.res) {
+      const newResponse = new Response(this.res.body, {
+        status: this.status,
+        headers: this.res.headers
+      });
+      return newResponse;
+    }
+    return new Response(this.message, {
+      status: this.status
+    });
+  }
+};
+
 // src/middleware/timeout/index.ts
 var defaultTimeoutException = new HTTPException$1(504, {
   message: "Gateway Timeout"
@@ -3566,6 +3863,73 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   __defProp$1(target, "default", { value: mod, enumerable: true }) ,
   mod
 ));
+
+// src/a2a/types.ts
+var ErrorCodeParseError = -32700;
+var ErrorCodeInvalidRequest = -32600;
+var ErrorCodeMethodNotFound = -32601;
+var ErrorCodeInvalidParams = -32602;
+var ErrorCodeInternalError = -32603;
+var ErrorCodeTaskNotFound = -32001;
+var ErrorCodeTaskNotCancelable = -32002;
+var ErrorCodePushNotificationNotSupported = -32003;
+var ErrorCodeUnsupportedOperation = -32004;
+
+// src/a2a/error.ts
+var MastraA2AError = class _MastraA2AError extends Error {
+  code;
+  data;
+  taskId;
+  // Optional task ID context
+  constructor(code, message, data, taskId) {
+    super(message);
+    this.name = "MastraA2AError";
+    this.code = code;
+    this.data = data;
+    this.taskId = taskId;
+  }
+  /**
+   * Formats the error into a standard JSON-RPC error object structure.
+   */
+  toJSONRPCError() {
+    const errorObject = {
+      code: this.code,
+      message: this.message
+    };
+    if (this.data !== void 0) {
+      errorObject.data = this.data;
+    }
+    return errorObject;
+  }
+  // Static factory methods for common errors
+  static parseError(message, data) {
+    return new _MastraA2AError(ErrorCodeParseError, message, data);
+  }
+  static invalidRequest(message, data) {
+    return new _MastraA2AError(ErrorCodeInvalidRequest, message, data);
+  }
+  static methodNotFound(method) {
+    return new _MastraA2AError(ErrorCodeMethodNotFound, `Method not found: ${method}`);
+  }
+  static invalidParams(message, data) {
+    return new _MastraA2AError(ErrorCodeInvalidParams, message, data);
+  }
+  static internalError(message, data) {
+    return new _MastraA2AError(ErrorCodeInternalError, message, data);
+  }
+  static taskNotFound(taskId) {
+    return new _MastraA2AError(ErrorCodeTaskNotFound, `Task not found: ${taskId}`, void 0, taskId);
+  }
+  static taskNotCancelable(taskId) {
+    return new _MastraA2AError(ErrorCodeTaskNotCancelable, `Task not cancelable: ${taskId}`, void 0, taskId);
+  }
+  static pushNotificationNotSupported() {
+    return new _MastraA2AError(ErrorCodePushNotificationNotSupported, "Push Notification is not supported");
+  }
+  static unsupportedOperation(operation) {
+    return new _MastraA2AError(ErrorCodeUnsupportedOperation, `Unsupported operation: ${operation}`);
+  }
+};
 
 // src/server/handlers/a2a.ts
 var a2a_exports = {};
@@ -8970,6 +9334,264 @@ var openai = createOpenAI({
   compatibility: "strict"
   // strict for OpenAI API
 });
+
+// src/memory/memory.ts
+var MemoryProcessor = class extends MastraBase {
+  /**
+   * Process a list of messages and return a filtered or transformed list.
+   * @param messages The messages to process
+   * @returns The processed messages
+   */
+  process(messages, _opts) {
+    return messages;
+  }
+};
+var memoryDefaultOptions = {
+  lastMessages: 10,
+  semanticRecall: false,
+  threads: {
+    generateTitle: true
+  },
+  workingMemory: {
+    enabled: false,
+    template: `
+# User Information
+- **First Name**: 
+- **Last Name**: 
+- **Location**: 
+- **Occupation**: 
+- **Interests**: 
+- **Goals**: 
+- **Events**: 
+- **Facts**: 
+- **Projects**: 
+`
+  }
+};
+var MastraMemory = class extends MastraBase {
+  MAX_CONTEXT_TOKENS;
+  _storage;
+  vector;
+  embedder;
+  processors = [];
+  threadConfig = { ...memoryDefaultOptions };
+  #mastra;
+  constructor(config) {
+    super({ component: "MEMORY", name: config.name });
+    if (config.options) this.threadConfig = this.getMergedThreadConfig(config.options);
+    if (config.processors) this.processors = config.processors;
+    if (config.storage) {
+      this._storage = augmentWithInit(config.storage);
+      this._hasOwnStorage = true;
+    }
+    if (this.threadConfig.semanticRecall) {
+      if (!config.vector) {
+        throw new Error(
+          `Semantic recall requires a vector store to be configured.
+
+https://mastra.ai/en/docs/memory/semantic-recall`
+        );
+      }
+      this.vector = config.vector;
+      if (!config.embedder) {
+        throw new Error(
+          `Semantic recall requires an embedder to be configured.
+
+https://mastra.ai/en/docs/memory/semantic-recall`
+        );
+      }
+      if (typeof config.embedder === "string") {
+        this.embedder = new ModelRouterEmbeddingModel(config.embedder);
+      } else {
+        this.embedder = config.embedder;
+      }
+    }
+  }
+  /**
+   * Internal method used by Mastra to register itself with the memory.
+   * @param mastra The Mastra instance.
+   * @internal
+   */
+  __registerMastra(mastra) {
+    this.#mastra = mastra;
+  }
+  _hasOwnStorage = false;
+  get hasOwnStorage() {
+    return this._hasOwnStorage;
+  }
+  get storage() {
+    if (!this._storage) {
+      throw new Error(
+        `Memory requires a storage provider to function. Add a storage configuration to Memory or to your Mastra instance.
+
+https://mastra.ai/en/docs/memory/overview`
+      );
+    }
+    return this._storage;
+  }
+  setStorage(storage) {
+    this._storage = augmentWithInit(storage);
+  }
+  setVector(vector) {
+    this.vector = vector;
+  }
+  setEmbedder(embedder) {
+    this.embedder = embedder;
+  }
+  /**
+   * Get a system message to inject into the conversation.
+   * This will be called before each conversation turn.
+   * Implementations can override this to inject custom system messages.
+   */
+  async getSystemMessage(_input) {
+    return null;
+  }
+  /**
+   * Get tools that should be available to the agent.
+   * This will be called when converting tools for the agent.
+   * Implementations can override this to provide additional tools.
+   */
+  getTools(_config) {
+    return {};
+  }
+  async createEmbeddingIndex(dimensions, config) {
+    const defaultDimensions = 1536;
+    const isDefault = dimensions === defaultDimensions;
+    const usedDimensions = dimensions ?? defaultDimensions;
+    const separator = this.vector?.indexSeparator ?? "_";
+    const indexName = isDefault ? `memory${separator}messages` : `memory${separator}messages${separator}${usedDimensions}`;
+    if (typeof this.vector === `undefined`) {
+      throw new Error(`Tried to create embedding index but no vector db is attached to this Memory instance.`);
+    }
+    const semanticConfig = typeof config?.semanticRecall === "object" ? config.semanticRecall : void 0;
+    const indexConfig = semanticConfig?.indexConfig;
+    const createParams = {
+      indexName,
+      dimension: usedDimensions,
+      ...indexConfig?.metric && { metric: indexConfig.metric }
+    };
+    if (indexConfig && (indexConfig.type || indexConfig.ivf || indexConfig.hnsw)) {
+      createParams.indexConfig = {};
+      if (indexConfig.type) createParams.indexConfig.type = indexConfig.type;
+      if (indexConfig.ivf) createParams.indexConfig.ivf = indexConfig.ivf;
+      if (indexConfig.hnsw) createParams.indexConfig.hnsw = indexConfig.hnsw;
+    }
+    await this.vector.createIndex(createParams);
+    return { indexName };
+  }
+  getMergedThreadConfig(config) {
+    if (config?.workingMemory && "use" in config.workingMemory) {
+      throw new Error("The workingMemory.use option has been removed. Working memory always uses tool-call mode.");
+    }
+    const mergedConfig = deepMerge(this.threadConfig, config || {});
+    if (config?.workingMemory?.schema) {
+      if (mergedConfig.workingMemory) {
+        mergedConfig.workingMemory.schema = config.workingMemory.schema;
+      }
+    }
+    return mergedConfig;
+  }
+  /**
+   * Apply all configured message processors to a list of messages.
+   * @param messages The messages to process
+   * @returns The processed messages
+   */
+  async applyProcessors(messages, opts) {
+    const processors = opts.processors || this.processors;
+    if (!processors || processors.length === 0) {
+      return messages;
+    }
+    let processedMessages = [...messages];
+    for (const processor of processors) {
+      processedMessages = await processor.process(processedMessages, {
+        systemMessage: opts.systemMessage,
+        newMessages: opts.newMessages,
+        memorySystemMessage: opts.memorySystemMessage
+      });
+    }
+    return processedMessages;
+  }
+  processMessages({
+    messages,
+    processors,
+    ...opts
+  }) {
+    return this.applyProcessors(messages, { processors: processors || this.processors, ...opts });
+  }
+  estimateTokens(text) {
+    return Math.ceil(text.split(" ").length * 1.3);
+  }
+  /**
+   * Helper method to create a new thread
+   * @param title - Optional title for the thread
+   * @param metadata - Optional metadata for the thread
+   * @returns Promise resolving to the created thread
+   */
+  async createThread({
+    threadId,
+    resourceId,
+    title,
+    metadata,
+    memoryConfig,
+    saveThread = true
+  }) {
+    const thread = {
+      id: threadId || this.generateId(),
+      title: title || `New Thread ${(/* @__PURE__ */ new Date()).toISOString()}`,
+      resourceId,
+      createdAt: /* @__PURE__ */ new Date(),
+      updatedAt: /* @__PURE__ */ new Date(),
+      metadata
+    };
+    return saveThread ? this.saveThread({ thread, memoryConfig }) : thread;
+  }
+  /**
+   * Helper method to add a single message to a thread
+   * @param threadId - The thread to add the message to
+   * @param content - The message content
+   * @param role - The role of the message sender
+   * @param type - The type of the message
+   * @param toolNames - Optional array of tool names that were called
+   * @param toolCallArgs - Optional array of tool call arguments
+   * @param toolCallIds - Optional array of tool call ids
+   * @returns Promise resolving to the saved message
+   * @deprecated use saveMessages instead
+   */
+  async addMessage({
+    threadId,
+    resourceId,
+    config,
+    content,
+    role,
+    type,
+    toolNames,
+    toolCallArgs,
+    toolCallIds
+  }) {
+    const message = {
+      id: this.generateId(),
+      content,
+      role,
+      createdAt: /* @__PURE__ */ new Date(),
+      threadId,
+      resourceId,
+      type,
+      toolNames,
+      toolCallArgs,
+      toolCallIds
+    };
+    const savedMessages = await this.saveMessages({ messages: [message], memoryConfig: config });
+    const list = new MessageList({ threadId, resourceId }).add(savedMessages[0], "memory");
+    return list.get.all.v1()[0];
+  }
+  /**
+   * Generates a unique identifier
+   * @returns A unique string ID
+   */
+  generateId() {
+    return this.#mastra?.generateId() || crypto.randomUUID();
+  }
+};
 
 // ../../node_modules/.pnpm/@vercel+oidc@3.0.3/node_modules/@vercel/oidc/dist/get-context.js
 var require_get_context = __commonJS({
@@ -14483,7 +15105,7 @@ function parseArrayDef2(def, refs) {
   const res = {
     type: "array"
   };
-  if (((_a21 = def.type) == null ? void 0 : _a21._def) && ((_c = (_b8 = def.type) == null ? void 0 : _b8._def) == null ? void 0 : _c.typeName) !== ZodFirstPartyTypeKind$1.ZodAny) {
+  if (((_a21 = def.type) == null ? void 0 : _a21._def) && ((_c = (_b8 = def.type) == null ? void 0 : _b8._def) == null ? void 0 : _c.typeName) !== ZodFirstPartyTypeKind.ZodAny) {
     res.items = parseDef2(def.type._def, {
       ...refs,
       currentPath: [...refs.currentPath, "items"]
@@ -14964,20 +15586,20 @@ function parseRecordDef2(def, refs) {
       currentPath: [...refs.currentPath, "additionalProperties"]
     })) != null ? _a21 : refs.allowedAdditionalProperties
   };
-  if (((_b8 = def.keyType) == null ? void 0 : _b8._def.typeName) === ZodFirstPartyTypeKind$1.ZodString && ((_c = def.keyType._def.checks) == null ? void 0 : _c.length)) {
+  if (((_b8 = def.keyType) == null ? void 0 : _b8._def.typeName) === ZodFirstPartyTypeKind.ZodString && ((_c = def.keyType._def.checks) == null ? void 0 : _c.length)) {
     const { type, ...keyType } = parseStringDef2(def.keyType._def, refs);
     return {
       ...schema,
       propertyNames: keyType
     };
-  } else if (((_d = def.keyType) == null ? void 0 : _d._def.typeName) === ZodFirstPartyTypeKind$1.ZodEnum) {
+  } else if (((_d = def.keyType) == null ? void 0 : _d._def.typeName) === ZodFirstPartyTypeKind.ZodEnum) {
     return {
       ...schema,
       propertyNames: {
         enum: def.keyType._def.values
       }
     };
-  } else if (((_e = def.keyType) == null ? void 0 : _e._def.typeName) === ZodFirstPartyTypeKind$1.ZodBranded && def.keyType._def.type._def.typeName === ZodFirstPartyTypeKind$1.ZodString && ((_f = def.keyType._def.type._def.checks) == null ? void 0 : _f.length)) {
+  } else if (((_e = def.keyType) == null ? void 0 : _e._def.typeName) === ZodFirstPartyTypeKind.ZodBranded && def.keyType._def.type._def.typeName === ZodFirstPartyTypeKind.ZodString && ((_f = def.keyType._def.type._def.checks) == null ? void 0 : _f.length)) {
     const { type, ...keyType } = parseBrandedDef2(
       def.keyType._def,
       refs
@@ -15319,73 +15941,73 @@ var parseReadonlyDef2 = (def, refs) => {
 };
 var selectParser2 = (def, typeName, refs) => {
   switch (typeName) {
-    case ZodFirstPartyTypeKind$1.ZodString:
+    case ZodFirstPartyTypeKind.ZodString:
       return parseStringDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodNumber:
+    case ZodFirstPartyTypeKind.ZodNumber:
       return parseNumberDef2(def);
-    case ZodFirstPartyTypeKind$1.ZodObject:
+    case ZodFirstPartyTypeKind.ZodObject:
       return parseObjectDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodBigInt:
+    case ZodFirstPartyTypeKind.ZodBigInt:
       return parseBigintDef2(def);
-    case ZodFirstPartyTypeKind$1.ZodBoolean:
+    case ZodFirstPartyTypeKind.ZodBoolean:
       return parseBooleanDef2();
-    case ZodFirstPartyTypeKind$1.ZodDate:
+    case ZodFirstPartyTypeKind.ZodDate:
       return parseDateDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodUndefined:
+    case ZodFirstPartyTypeKind.ZodUndefined:
       return parseUndefinedDef2();
-    case ZodFirstPartyTypeKind$1.ZodNull:
+    case ZodFirstPartyTypeKind.ZodNull:
       return parseNullDef2();
-    case ZodFirstPartyTypeKind$1.ZodArray:
+    case ZodFirstPartyTypeKind.ZodArray:
       return parseArrayDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodUnion:
-    case ZodFirstPartyTypeKind$1.ZodDiscriminatedUnion:
+    case ZodFirstPartyTypeKind.ZodUnion:
+    case ZodFirstPartyTypeKind.ZodDiscriminatedUnion:
       return parseUnionDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodIntersection:
+    case ZodFirstPartyTypeKind.ZodIntersection:
       return parseIntersectionDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodTuple:
+    case ZodFirstPartyTypeKind.ZodTuple:
       return parseTupleDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodRecord:
+    case ZodFirstPartyTypeKind.ZodRecord:
       return parseRecordDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodLiteral:
+    case ZodFirstPartyTypeKind.ZodLiteral:
       return parseLiteralDef2(def);
-    case ZodFirstPartyTypeKind$1.ZodEnum:
+    case ZodFirstPartyTypeKind.ZodEnum:
       return parseEnumDef2(def);
-    case ZodFirstPartyTypeKind$1.ZodNativeEnum:
+    case ZodFirstPartyTypeKind.ZodNativeEnum:
       return parseNativeEnumDef2(def);
-    case ZodFirstPartyTypeKind$1.ZodNullable:
+    case ZodFirstPartyTypeKind.ZodNullable:
       return parseNullableDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodOptional:
+    case ZodFirstPartyTypeKind.ZodOptional:
       return parseOptionalDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodMap:
+    case ZodFirstPartyTypeKind.ZodMap:
       return parseMapDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodSet:
+    case ZodFirstPartyTypeKind.ZodSet:
       return parseSetDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodLazy:
+    case ZodFirstPartyTypeKind.ZodLazy:
       return () => def.getter()._def;
-    case ZodFirstPartyTypeKind$1.ZodPromise:
+    case ZodFirstPartyTypeKind.ZodPromise:
       return parsePromiseDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodNaN:
-    case ZodFirstPartyTypeKind$1.ZodNever:
+    case ZodFirstPartyTypeKind.ZodNaN:
+    case ZodFirstPartyTypeKind.ZodNever:
       return parseNeverDef2();
-    case ZodFirstPartyTypeKind$1.ZodEffects:
+    case ZodFirstPartyTypeKind.ZodEffects:
       return parseEffectsDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodAny:
+    case ZodFirstPartyTypeKind.ZodAny:
       return parseAnyDef2();
-    case ZodFirstPartyTypeKind$1.ZodUnknown:
+    case ZodFirstPartyTypeKind.ZodUnknown:
       return parseUnknownDef2();
-    case ZodFirstPartyTypeKind$1.ZodDefault:
+    case ZodFirstPartyTypeKind.ZodDefault:
       return parseDefaultDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodBranded:
+    case ZodFirstPartyTypeKind.ZodBranded:
       return parseBrandedDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodReadonly:
+    case ZodFirstPartyTypeKind.ZodReadonly:
       return parseReadonlyDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodCatch:
+    case ZodFirstPartyTypeKind.ZodCatch:
       return parseCatchDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodPipeline:
+    case ZodFirstPartyTypeKind.ZodPipeline:
       return parsePipelineDef2(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodFunction:
-    case ZodFirstPartyTypeKind$1.ZodVoid:
-    case ZodFirstPartyTypeKind$1.ZodSymbol:
+    case ZodFirstPartyTypeKind.ZodFunction:
+    case ZodFirstPartyTypeKind.ZodVoid:
+    case ZodFirstPartyTypeKind.ZodSymbol:
       return void 0;
     default:
       return /* @__PURE__ */ ((_) => void 0)();
@@ -15542,14 +16164,14 @@ function zod3Schema(zodSchema22, options) {
 function zod4Schema(zodSchema22, options) {
   var _a21;
   const useReferences = (_a21 = void 0 ) != null ? _a21 : false;
-  const z4JSONSchema = z42.toJSONSchema(zodSchema22, {
+  const z4JSONSchema = toJSONSchema(zodSchema22, {
     target: "draft-7",
     io: "output",
     reused: useReferences ? "ref" : "inline"
   });
   return jsonSchema2(z4JSONSchema, {
     validate: async (value) => {
-      const result = await z42.safeParseAsync(zodSchema22, value);
+      const result = await safeParseAsync(zodSchema22, value);
       return result.success ? { success: true, value: result.data } : { success: false, error: result.error };
     }
   });
@@ -20486,7 +21108,7 @@ function parseArrayDef3(def, refs) {
   const res = {
     type: "array"
   };
-  if (((_a21 = def.type) == null ? void 0 : _a21._def) && ((_c = (_b8 = def.type) == null ? void 0 : _b8._def) == null ? void 0 : _c.typeName) !== ZodFirstPartyTypeKind$1.ZodAny) {
+  if (((_a21 = def.type) == null ? void 0 : _a21._def) && ((_c = (_b8 = def.type) == null ? void 0 : _b8._def) == null ? void 0 : _c.typeName) !== ZodFirstPartyTypeKind.ZodAny) {
     res.items = parseDef3(def.type._def, {
       ...refs,
       currentPath: [...refs.currentPath, "items"]
@@ -20965,20 +21587,20 @@ function parseRecordDef3(def, refs) {
       currentPath: [...refs.currentPath, "additionalProperties"]
     })) != null ? _a21 : refs.allowedAdditionalProperties
   };
-  if (((_b8 = def.keyType) == null ? void 0 : _b8._def.typeName) === ZodFirstPartyTypeKind$1.ZodString && ((_c = def.keyType._def.checks) == null ? void 0 : _c.length)) {
+  if (((_b8 = def.keyType) == null ? void 0 : _b8._def.typeName) === ZodFirstPartyTypeKind.ZodString && ((_c = def.keyType._def.checks) == null ? void 0 : _c.length)) {
     const { type, ...keyType } = parseStringDef3(def.keyType._def, refs);
     return {
       ...schema,
       propertyNames: keyType
     };
-  } else if (((_d = def.keyType) == null ? void 0 : _d._def.typeName) === ZodFirstPartyTypeKind$1.ZodEnum) {
+  } else if (((_d = def.keyType) == null ? void 0 : _d._def.typeName) === ZodFirstPartyTypeKind.ZodEnum) {
     return {
       ...schema,
       propertyNames: {
         enum: def.keyType._def.values
       }
     };
-  } else if (((_e = def.keyType) == null ? void 0 : _e._def.typeName) === ZodFirstPartyTypeKind$1.ZodBranded && def.keyType._def.type._def.typeName === ZodFirstPartyTypeKind$1.ZodString && ((_f = def.keyType._def.type._def.checks) == null ? void 0 : _f.length)) {
+  } else if (((_e = def.keyType) == null ? void 0 : _e._def.typeName) === ZodFirstPartyTypeKind.ZodBranded && def.keyType._def.type._def.typeName === ZodFirstPartyTypeKind.ZodString && ((_f = def.keyType._def.type._def.checks) == null ? void 0 : _f.length)) {
     const { type, ...keyType } = parseBrandedDef3(
       def.keyType._def,
       refs
@@ -21318,73 +21940,73 @@ var parseReadonlyDef3 = (def, refs) => {
 };
 var selectParser3 = (def, typeName, refs) => {
   switch (typeName) {
-    case ZodFirstPartyTypeKind$1.ZodString:
+    case ZodFirstPartyTypeKind.ZodString:
       return parseStringDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodNumber:
+    case ZodFirstPartyTypeKind.ZodNumber:
       return parseNumberDef3(def);
-    case ZodFirstPartyTypeKind$1.ZodObject:
+    case ZodFirstPartyTypeKind.ZodObject:
       return parseObjectDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodBigInt:
+    case ZodFirstPartyTypeKind.ZodBigInt:
       return parseBigintDef3(def);
-    case ZodFirstPartyTypeKind$1.ZodBoolean:
+    case ZodFirstPartyTypeKind.ZodBoolean:
       return parseBooleanDef3();
-    case ZodFirstPartyTypeKind$1.ZodDate:
+    case ZodFirstPartyTypeKind.ZodDate:
       return parseDateDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodUndefined:
+    case ZodFirstPartyTypeKind.ZodUndefined:
       return parseUndefinedDef3();
-    case ZodFirstPartyTypeKind$1.ZodNull:
+    case ZodFirstPartyTypeKind.ZodNull:
       return parseNullDef3();
-    case ZodFirstPartyTypeKind$1.ZodArray:
+    case ZodFirstPartyTypeKind.ZodArray:
       return parseArrayDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodUnion:
-    case ZodFirstPartyTypeKind$1.ZodDiscriminatedUnion:
+    case ZodFirstPartyTypeKind.ZodUnion:
+    case ZodFirstPartyTypeKind.ZodDiscriminatedUnion:
       return parseUnionDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodIntersection:
+    case ZodFirstPartyTypeKind.ZodIntersection:
       return parseIntersectionDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodTuple:
+    case ZodFirstPartyTypeKind.ZodTuple:
       return parseTupleDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodRecord:
+    case ZodFirstPartyTypeKind.ZodRecord:
       return parseRecordDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodLiteral:
+    case ZodFirstPartyTypeKind.ZodLiteral:
       return parseLiteralDef3(def);
-    case ZodFirstPartyTypeKind$1.ZodEnum:
+    case ZodFirstPartyTypeKind.ZodEnum:
       return parseEnumDef3(def);
-    case ZodFirstPartyTypeKind$1.ZodNativeEnum:
+    case ZodFirstPartyTypeKind.ZodNativeEnum:
       return parseNativeEnumDef3(def);
-    case ZodFirstPartyTypeKind$1.ZodNullable:
+    case ZodFirstPartyTypeKind.ZodNullable:
       return parseNullableDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodOptional:
+    case ZodFirstPartyTypeKind.ZodOptional:
       return parseOptionalDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodMap:
+    case ZodFirstPartyTypeKind.ZodMap:
       return parseMapDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodSet:
+    case ZodFirstPartyTypeKind.ZodSet:
       return parseSetDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodLazy:
+    case ZodFirstPartyTypeKind.ZodLazy:
       return () => def.getter()._def;
-    case ZodFirstPartyTypeKind$1.ZodPromise:
+    case ZodFirstPartyTypeKind.ZodPromise:
       return parsePromiseDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodNaN:
-    case ZodFirstPartyTypeKind$1.ZodNever:
+    case ZodFirstPartyTypeKind.ZodNaN:
+    case ZodFirstPartyTypeKind.ZodNever:
       return parseNeverDef3();
-    case ZodFirstPartyTypeKind$1.ZodEffects:
+    case ZodFirstPartyTypeKind.ZodEffects:
       return parseEffectsDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodAny:
+    case ZodFirstPartyTypeKind.ZodAny:
       return parseAnyDef3();
-    case ZodFirstPartyTypeKind$1.ZodUnknown:
+    case ZodFirstPartyTypeKind.ZodUnknown:
       return parseUnknownDef3();
-    case ZodFirstPartyTypeKind$1.ZodDefault:
+    case ZodFirstPartyTypeKind.ZodDefault:
       return parseDefaultDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodBranded:
+    case ZodFirstPartyTypeKind.ZodBranded:
       return parseBrandedDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodReadonly:
+    case ZodFirstPartyTypeKind.ZodReadonly:
       return parseReadonlyDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodCatch:
+    case ZodFirstPartyTypeKind.ZodCatch:
       return parseCatchDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodPipeline:
+    case ZodFirstPartyTypeKind.ZodPipeline:
       return parsePipelineDef3(def, refs);
-    case ZodFirstPartyTypeKind$1.ZodFunction:
-    case ZodFirstPartyTypeKind$1.ZodVoid:
-    case ZodFirstPartyTypeKind$1.ZodSymbol:
+    case ZodFirstPartyTypeKind.ZodFunction:
+    case ZodFirstPartyTypeKind.ZodVoid:
+    case ZodFirstPartyTypeKind.ZodSymbol:
       return void 0;
     default:
       return /* @__PURE__ */ ((_) => void 0)();
@@ -21544,14 +22166,14 @@ function zod4Schema2(zodSchema22, options) {
   const useReferences = (_a21 = void 0 ) != null ? _a21 : false;
   return jsonSchema3(
     // defer json schema creation to avoid unnecessary computation when only validation is needed
-    () => z42.toJSONSchema(zodSchema22, {
+    () => toJSONSchema(zodSchema22, {
       target: "draft-7",
       io: "output",
       reused: useReferences ? "ref" : "inline"
     }),
     {
       validate: async (value) => {
-        const result = await z42.safeParseAsync(zodSchema22, value);
+        const result = await safeParseAsync(zodSchema22, value);
         return result.success ? { success: true, value: result.data } : { success: false, error: result.error };
       }
     }
@@ -25585,7 +26207,7 @@ ${additionalInstructions}`;
     return super.generate(messages, enhancedOptions);
   }
 };
-var cloneTemplateStep = createStep({
+var cloneTemplateStep = createStep$1({
   id: "clone-template",
   description: "Clone the template repository to a temporary directory at the specified ref",
   inputSchema: AgentBuilderInputSchema,
@@ -25626,7 +26248,7 @@ var cloneTemplateStep = createStep({
     }
   }
 });
-var analyzePackageStep = createStep({
+var analyzePackageStep = createStep$1({
   id: "analyze-package",
   description: "Analyze the template package.json to extract dependency information",
   inputSchema: CloneTemplateResultSchema,
@@ -25665,7 +26287,7 @@ var analyzePackageStep = createStep({
     }
   }
 });
-var discoverUnitsStep = createStep({
+var discoverUnitsStep = createStep$1({
   id: "discover-units",
   description: "Discover template units by analyzing the templates directory structure",
   inputSchema: CloneTemplateResultSchema,
@@ -25791,7 +26413,7 @@ Return the actual exported names of the units, as well as the file names.`,
     }
   }
 });
-var orderUnitsStep = createStep({
+var orderUnitsStep = createStep$1({
   id: "order-units",
   description: "Sort units in topological order based on kind weights",
   inputSchema: DiscoveryResultSchema,
@@ -25809,7 +26431,7 @@ var orderUnitsStep = createStep({
     };
   }
 });
-var prepareBranchStep = createStep({
+var prepareBranchStep = createStep$1({
   id: "prepare-branch",
   description: "Create or switch to integration branch before modifications",
   inputSchema: PrepareBranchInputSchema,
@@ -25834,7 +26456,7 @@ var prepareBranchStep = createStep({
     }
   }
 });
-var packageMergeStep = createStep({
+var packageMergeStep = createStep$1({
   id: "package-merge",
   description: "Merge template package.json dependencies into target project",
   inputSchema: PackageMergeInputSchema,
@@ -25911,7 +26533,7 @@ var packageMergeStep = createStep({
     }
   }
 });
-var installStep = createStep({
+var installStep = createStep$1({
   id: "install",
   description: "Install packages based on merged package.json",
   inputSchema: InstallInputSchema,
@@ -25939,7 +26561,7 @@ var installStep = createStep({
     }
   }
 });
-var programmaticFileCopyStep = createStep({
+var programmaticFileCopyStep = createStep$1({
   id: "programmatic-file-copy",
   description: "Programmatically copy template files to target project based on ordered units",
   inputSchema: FileCopyInputSchema,
@@ -26291,7 +26913,7 @@ var programmaticFileCopyStep = createStep({
     }
   }
 });
-var intelligentMergeStep = createStep({
+var intelligentMergeStep = createStep$1({
   id: "intelligent-merge",
   description: "Use AgentBuilder to intelligently merge template files",
   inputSchema: IntelligentMergeInputSchema,
@@ -26559,7 +27181,7 @@ Start by listing your tasks and work through them systematically!
     }
   }
 });
-var validationAndFixStep = createStep({
+var validationAndFixStep = createStep$1({
   id: "validation-and-fix",
   description: "Validate the merged template code and fix any issues using a specialized agent",
   inputSchema: ValidationFixInputSchema,
@@ -26825,7 +27447,7 @@ Previous iterations may have fixed some issues, so start by re-running validateC
     }
   }
 });
-var agentBuilderTemplateWorkflow = createWorkflow({
+var agentBuilderTemplateWorkflow = createWorkflow$1({
   id: "agent-builder-template",
   description: "Merges a Mastra template repository into the current project using intelligent AgentBuilder-powered merging",
   inputSchema: AgentBuilderInputSchema,
@@ -27276,7 +27898,7 @@ var TaskApprovalResumeSchema = z.object({
   approved: z.boolean(),
   modifications: z.string().optional()
 });
-var planningIterationStep = createStep({
+var planningIterationStep = createStep$1({
   id: "planning-iteration",
   description: "Create or refine task plan with user input",
   inputSchema: PlanningIterationInputSchema,
@@ -27415,7 +28037,7 @@ var planningIterationStep = createStep({
     }
   }
 });
-var taskApprovalStep = createStep({
+var taskApprovalStep = createStep$1({
   id: "task-approval",
   description: "Get user approval for the final task list",
   inputSchema: PlanningIterationResultSchema,
@@ -27455,7 +28077,7 @@ ${tasks.map((task, i) => `${i + 1}. [${task.priority.toUpperCase()}] ${task.cont
     }
   }
 });
-var planningAndApprovalWorkflow = createWorkflow({
+var planningAndApprovalWorkflow = createWorkflow$1({
   id: "planning-and-approval",
   description: "Handle iterative planning with questions and task list approval",
   inputSchema: PlanningIterationInputSchema,
@@ -27907,7 +28529,7 @@ var restrictedTaskManager = createTool({
     return await AgentBuilderDefaults.manageTaskList(adaptedContext);
   }
 });
-var workflowDiscoveryStep = createStep({
+var workflowDiscoveryStep = createStep$1({
   id: "workflow-discovery",
   description: "Discover existing workflows in the project",
   inputSchema: WorkflowBuilderInputSchema,
@@ -27966,7 +28588,7 @@ var workflowDiscoveryStep = createStep({
     }
   }
 });
-var projectDiscoveryStep = createStep({
+var projectDiscoveryStep = createStep$1({
   id: "project-discovery",
   description: "Analyze the project structure and setup",
   inputSchema: WorkflowDiscoveryResultSchema,
@@ -28028,7 +28650,7 @@ var projectDiscoveryStep = createStep({
     }
   }
 });
-var workflowResearchStep = createStep({
+var workflowResearchStep = createStep$1({
   id: "workflow-research",
   description: "Research Mastra workflows and gather relevant documentation",
   inputSchema: ProjectDiscoveryResultSchema,
@@ -28093,7 +28715,7 @@ var workflowResearchStep = createStep({
     }
   }
 });
-var taskExecutionStep = createStep({
+var taskExecutionStep = createStep$1({
   id: "task-execution",
   description: "Execute the approved task list to create or edit the workflow",
   inputSchema: TaskExecutionInputSchema,
@@ -28311,7 +28933,7 @@ ${workflowBuilderPrompts.validation.instructions}`;
     }
   }
 });
-var workflowBuilderWorkflow = createWorkflow({
+var workflowBuilderWorkflow = createWorkflow$1({
   id: "workflow-builder",
   description: "Create or edit Mastra workflows using AI-powered assistance with iterative planning",
   inputSchema: WorkflowBuilderInputSchema,
@@ -29582,7 +30204,7 @@ async function getMemoryFromContext({
   }
   if (agent) {
     return await agent?.getMemory({
-      runtimeContext: runtimeContext ?? new RuntimeContext$1()
+      runtimeContext: runtimeContext ?? new RuntimeContext()
     }) || mastra.getMemory();
   }
   return mastra.getMemory();
@@ -35813,9 +36435,9 @@ function determineSpecificType(value) {
     if (value.constructor?.name) {
       return `an instance of ${value.constructor.name}`;
     }
-    return `${util.inspect(value, { depth: -1 })}`;
+    return `${require$$0.inspect(value, { depth: -1 })}`;
   }
-  let inspected = util.inspect(value, { colors: false });
+  let inspected = require$$0.inspect(value, { colors: false });
   if (inspected.length > 28) {
     inspected = `${inspected.slice(0, 25)}...`;
   }
@@ -35838,7 +36460,7 @@ var ERR_HTTP_HEADERS_SENT = class extends Error {
 };
 var ERR_INVALID_ARG_VALUE = class extends TypeError {
   constructor(name, value, reason = "is invalid") {
-    let inspected = util.inspect(value);
+    let inspected = require$$0.inspect(value);
     if (inspected.length > 128) {
       inspected = `${inspected.slice(0, 128)}...`;
     }
@@ -43606,60 +44228,73 @@ async function createNodeServer(mastra, options = { tools: {} }) {
 }
 
 // @ts-ignore
-// @ts-ignore
-// @ts-ignore
-await createNodeServer(mastra, {
-  playground: true,
-  isDev: true,
-  tools: getToolExports(tools),
-});
+    await createNodeServer(mastra, { tools: getToolExports(tools) });
 
-registerHook(AvailableHooks.ON_GENERATION, ({ input, output, metric, runId, agentName, instructions }) => {
-  evaluate({
-    agentName,
-    input,
-    metric,
-    output,
-    runId,
-    globalRunId: runId,
-    instructions,
-  });
-});
-
-if (mastra.getStorage()) {
-  mastra.__registerInternalWorkflow(scoreTracesWorkflow);
-}
-
-registerHook(AvailableHooks.ON_EVALUATION, async traceObject => {
-  const storage = mastra.getStorage();
-  if (storage) {
-    // Check for required fields
-    const logger = mastra?.getLogger();
-    const areFieldsValid = checkEvalStorageFields(traceObject, logger);
-    if (!areFieldsValid) return;
-
-    await storage.insert({
-      tableName: TABLE_EVALS,
-      record: {
-        input: traceObject.input,
-        output: traceObject.output,
-        result: JSON.stringify(traceObject.result || {}),
-        agent_name: traceObject.agentName,
-        metric_name: traceObject.metricName,
-        instructions: traceObject.instructions,
-        test_info: null,
-        global_run_id: traceObject.globalRunId,
-        run_id: traceObject.runId,
-        created_at: new Date().toISOString(),
-      },
+    registerHook(AvailableHooks.ON_GENERATION, ({ input, output, metric, runId, agentName, instructions }) => {
+      evaluate({
+        agentName,
+        input,
+        metric,
+        output,
+        runId,
+        globalRunId: runId,
+        instructions,
+      });
     });
-  }
+
+    if (mastra.getStorage()) {
+      // start storage init in the background
+      mastra.getStorage().init();
+      mastra.__registerInternalWorkflow(scoreTracesWorkflow);
+    }
+
+    registerHook(AvailableHooks.ON_EVALUATION, async traceObject => {
+      const storage = mastra.getStorage();
+      if (storage) {
+        // Check for required fields
+        const logger = mastra?.getLogger();
+        const areFieldsValid = checkEvalStorageFields(traceObject, logger);
+        if (!areFieldsValid) return;
+
+        await storage.insert({
+          tableName: TABLE_EVALS,
+          record: {
+            input: traceObject.input,
+            output: traceObject.output,
+            result: JSON.stringify(traceObject.result || {}),
+            agent_name: traceObject.agentName,
+            metric_name: traceObject.metricName,
+            instructions: traceObject.instructions,
+            test_info: null,
+            global_run_id: traceObject.globalRunId,
+            run_id: traceObject.runId,
+            created_at: new Date().toISOString(),
+          },
+        });
+      }
+    });
+
+var modelsDevLJ4O6FNF = /*#__PURE__*/Object.freeze({
+  __proto__: null,
+  ModelsDevGateway: ModelsDevGateway
+});
+
+var netlifyL7AZ74PV = /*#__PURE__*/Object.freeze({
+  __proto__: null,
+  NetlifyGateway: NetlifyGateway
+});
+
+var providerRegistry7BUYRBGO = /*#__PURE__*/Object.freeze({
+  __proto__: null,
+  GatewayRegistry: GatewayRegistry,
+  PROVIDER_REGISTRY: PROVIDER_REGISTRY,
+  getProviderConfig: getProviderConfig
 });
 
 var distYREX2TJT = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    createOpenAI: createOpenAI,
-    openai: openai
+  __proto__: null,
+  createOpenAI: createOpenAI,
+  openai: openai
 });
 
-export { InvalidResponseDataError as I, NoSuchModelError$1 as N, TooManyEmbeddingValuesForCallError as T, UnsupportedFunctionalityError as U, __commonJS as _, __require as a, resolve$1 as b, combineHeaders$1 as c, postJsonToApi$1 as d, createJsonResponseHandler$1 as e, createEventSourceResponseHandler$1 as f, convertUint8ArrayToBase64 as g, createJsonErrorResponseHandler$1 as h, generateId as i, isParsableJson as j, convertBase64ToUint8Array as k, loadApiKey as l, postFormDataToApi as m, parseProviderOptions as p, require_token_error as r, withoutTrailingSlash$1 as w };
+export { InvalidResponseDataError as I, NoSuchModelError$1 as N, TooManyEmbeddingValuesForCallError as T, UnsupportedFunctionalityError as U, __commonJS as _, __require as a, resolve$1 as b, combineHeaders$1 as c, postJsonToApi$1 as d, createJsonResponseHandler$1 as e, createEventSourceResponseHandler$1 as f, convertUint8ArrayToBase64 as g, createJsonErrorResponseHandler$1 as h, generateId as i, isParsableJson as j, convertBase64ToUint8Array as k, loadApiKey as l, postFormDataToApi as m, modelsDevLJ4O6FNF as n, netlifyL7AZ74PV as o, parseProviderOptions as p, providerRegistry7BUYRBGO as q, require_token_error as r, withoutTrailingSlash$1 as w };

@@ -9,7 +9,7 @@ async function main() {
     await initDB();
 
     // Start Telegram bot
-    startBot();
+    await startBot();
 
     console.log('✅ Bot is ready!');
 }

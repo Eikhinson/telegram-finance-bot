@@ -37,13 +37,26 @@ bot.catch((err, ctx) => {
     ctx.reply('Произошла ошибка. Попробуйте ещё раз.');
 });
 
-export function startBot() {
-    bot.launch();
-    console.log('🤖 Telegram bot started');
+export async function startBot() {
+    try {
+        // @ts-ignore - Telegraf types might be slightly off for launch options in some versions
+        await bot.launch({
+            dropPendingUpdates: true,
+        });
+        console.log('🤖 Telegram bot started successfully');
 
-    // Enable graceful stop
-    process.once('SIGINT', () => bot.stop('SIGINT'));
-    process.once('SIGTERM', () => bot.stop('SIGTERM'));
+        // Enable graceful stop
+        const stopBot = (signal: string) => {
+            console.log(`Checking signal: ${signal}`);
+            bot.stop(signal);
+        };
+
+        process.once('SIGINT', () => stopBot('SIGINT'));
+        process.once('SIGTERM', () => stopBot('SIGTERM'));
+    } catch (error) {
+        console.error('❌ Failed to start Telegram bot:', error);
+        throw error;
+    }
 }
 
 export { bot };
