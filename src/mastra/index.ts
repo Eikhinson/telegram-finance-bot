@@ -10,6 +10,6 @@ export const mastra = new Mastra({
     },
 
     storage: new PostgresStore({
-        connectionString: process.env.POSTGRES_CONNECTION_STRING!,
+        connectionString: process.env.DATABASE_URL || process.env.POSTGRES_CONNECTION_STRING!,
     }),
 });
